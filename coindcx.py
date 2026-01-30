@@ -107,12 +107,9 @@ def place_bracket(side: str, symbol: str, entry: float):
         return {"status": "TEST_MODE"}
 
     json_body = json.dumps(body, separators=(",", ":"))
+    secret_bytes = COINDCX_SECRET.encode('utf-8')
 
-    signature = hmac.new(
-        COINDCX_SECRET.encode("utf-8"),
-        json_body.encode(),
-        hashlib.sha256
-    ).hexdigest()
+    signature = hmac.new(secret_bytes, json_body.encode(), hashlib.sha256).hexdigest()
 
     headers = {
         "Content-Type": "application/json",
