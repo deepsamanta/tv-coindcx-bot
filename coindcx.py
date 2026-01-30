@@ -8,31 +8,49 @@ import math
 from config import (
     COINDCX_KEY,
     COINDCX_SECRET,
-    LEVERAGE,
     CAPITAL_USDT,
+    LEVERAGE,
     TEST_MODE,
     TP_PERCENT,
     SL_PERCENT
 )
 
-# ===== QTY PRECISION =====
-STEP = 0.001  # futures precision for majors
+# ===== COINDCX FUTURES QTY SETTINGS =====
+STEP = 0.001        # CoinDCX futures precision
+MIN_QTY = STEP     # never allow 0 qty
 
 
 def apply_precision(qty, step=STEP):
+    """
+    Floor qty to allowed precision
+    """
     qty = round(qty, 6)
     return math.floor(qty / step) * step
 
 
 def compute_qty(entry_price: float):
+    """
+    Compute quantity using fixed capital + leverage
+    NEVER returns zero
+    """
     exposure = CAPITAL_USDT * LEVERAGE
     raw_qty = exposure / entry_price
 
-    # Large qty → integer only
+    # Large quantity → integer only
     if raw_qty > 50:
         return int(raw_qty)
 
-    return apply_precision(raw_qty)
+    qty = apply_precision(raw_qty)
+
+    # 🔑 CRITICAL FIX: never return 0
+    if qty < MIN_QTY:
+        print(
+            f"[WARN] Qty too small ({raw_qty:.6f}), forcing minimum qty {MIN_QTY}",
+            flush=True
+        )
+        return MIN_QTY
+
+    return qty
 
 
 def fut_pair(symbol: str) -> str:
@@ -48,19 +66,21 @@ def fut_pair(symbol: str) -> str:
 
 
 def place_bracket(side: str, symbol: str, entry: float):
+    """
+    Place CoinDCX futures order with TP & SL
+    TP = +4%
+    SL = -5%
+    """
     timestamp = int(time.time() * 1000)
     entry = float(entry)
 
     qty = compute_qty(entry)
 
-    if qty <= 0:
-        raise ValueError("Computed quantity is zero")
-
-    # === TP / SL ===
+    # === TP / SL CALCULATION ===
     if side == "buy":
         tp = entry * (1 + TP_PERCENT)
         sl = entry * (1 - SL_PERCENT)
-    else:
+    else:  # sell
         tp = entry * (1 - TP_PERCENT)
         sl = entry * (1 + SL_PERCENT)
 
@@ -83,12 +103,13 @@ def place_bracket(side: str, symbol: str, entry: float):
     }
 
     if TEST_MODE:
-        print("[TEST_MODE] Payload:", body)
+        print("[TEST_MODE] Payload:", body, flush=True)
         return {"status": "TEST_MODE"}
 
     json_body = json.dumps(body, separators=(",", ":"))
+
     signature = hmac.new(
-        COINDCX_SECRET.encode(),
+        COINDCX_SECRET.encode("utf-8"),
         json_body.encode(),
         hashlib.sha256
     ).hexdigest()
@@ -101,7 +122,10 @@ def place_bracket(side: str, symbol: str, entry: float):
 
     url = "https://api.coindcx.com/exchange/v1/derivatives/futures/orders/create"
 
-    r = requests.post(url, data=json_body, headers=headers, timeout=10)
-    print("[COINDCX]", r.status_code, r.text)
-
-    return r.json() if r.text else None
+    try:
+        r = requests.post(url, data=json_body, headers=headers, timeout=10)
+        print("[COINDCX]", r.status_code, r.text, flush=True)
+        return r.json() if r.text else None
+    except Exception as e:
+        print("❌ COINDCX API ERROR:", str(e), flush=True)
+        raise
