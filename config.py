@@ -1,7 +1,7 @@
 import os
 
 # ===== MODE =====
-TEST_MODE = os.getenv("TEST_MODE", "true").lower() == "false"
+TEST_MODE = os.getenv("TEST_MODE", "true").lower() == "true"
 
 # ===== COINDCX API =====
 COINDCX_KEY = os.getenv("COINDCX_KEY")
