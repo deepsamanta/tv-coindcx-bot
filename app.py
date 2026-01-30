@@ -1,6 +1,5 @@
 from flask import Flask, request
 from coindcx import place_bracket
-from config import DEFAULT_QTY
 
 app = Flask(__name__)
 
@@ -19,11 +18,11 @@ def webhook():
     price = float(data.get("price"))
 
     if signal == "BUY" and CURRENT_POSITION != "LONG":
-        place_bracket("buy", symbol, price, DEFAULT_QTY)
+        place_bracket("buy", symbol, price)
         CURRENT_POSITION = "LONG"
 
     elif signal == "SELL" and CURRENT_POSITION != "SHORT":
-        place_bracket("sell", symbol, price, DEFAULT_QTY)
+        place_bracket("sell", symbol, price)
         CURRENT_POSITION = "SHORT"
 
     elif signal == "EXIT":

@@ -7,9 +7,9 @@ TEST_MODE = os.getenv("TEST_MODE", "true").lower() == "false"
 COINDCX_KEY = os.getenv("COINDCX_KEY")
 COINDCX_SECRET = os.getenv("COINDCX_SECRET")
 
-# ===== TRADING PARAMS =====
-LEVERAGE = int(os.getenv("LEVERAGE", 5))
-DEFAULT_QTY = float(os.getenv("DEFAULT_QTY", 0.001))
+# ===== CAPITAL & LEVERAGE =====
+CAPITAL_USDT = float(os.getenv("CAPITAL_USDT", 5))   # fixed $5
+LEVERAGE = int(os.getenv("LEVERAGE", 5))             # fixed 5x
 
 # ===== RISK SETTINGS =====
 TP_PERCENT = 0.04   # 4%
