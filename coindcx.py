@@ -15,48 +15,39 @@ from config import (
     SL_PERCENT
 )
 
-# ===== COINDCX FUTURES QTY SETTINGS =====
-STEP = 0.001        # CoinDCX futures precision
-MIN_QTY = STEP     # never allow 0 qty
+# ===== COINDCX FUTURES SETTINGS =====
+STEP = 0.001        # Required precision
+MIN_STEP_UNITS = 1 # Never allow zero qty
 
 
-def apply_precision(qty, step=STEP):
+def compute_qty(entry_price: float) -> float:
     """
-    Floor qty to allowed precision
-    """
-    qty = round(qty, 6)
-    return math.floor(qty / step) * step
-
-
-def compute_qty(entry_price: float):
-    """
-    Compute quantity using fixed capital + leverage
-    NEVER returns zero
+    Compute quantity using integer step units ONLY
+    Ensures qty is always divisible by STEP
     """
     exposure = CAPITAL_USDT * LEVERAGE
     raw_qty = exposure / entry_price
 
-    # Large quantity → integer only
-    if raw_qty > 50:
-        return int(raw_qty)
+    # Convert to integer step units FIRST
+    step_units = int(raw_qty / STEP)
 
-    qty = apply_precision(raw_qty)
-
-    # 🔑 CRITICAL FIX: never return 0
-    if qty < MIN_QTY:
+    if step_units < MIN_STEP_UNITS:
         print(
-            f"[WARN] Qty too small ({raw_qty:.6f}), forcing minimum qty {MIN_QTY}",
+            f"[WARN] Qty too small ({raw_qty:.8f}), forcing minimum qty {STEP}",
             flush=True
         )
-        return MIN_QTY
+        step_units = MIN_STEP_UNITS
 
-    return qty
+    qty = step_units * STEP
+
+    # Final safety rounding (eliminates float garbage)
+    return round(qty, 3)
 
 
 def fut_pair(symbol: str) -> str:
     """
-    TradingView: BTCUSDT
-    CoinDCX Futures: B-BTC_USDT
+    TradingView: ETHUSDT
+    CoinDCX Futures: B-ETH_USDT
     """
     if not symbol.endswith("USDT"):
         raise ValueError(f"Invalid TradingView symbol: {symbol}")
@@ -76,7 +67,7 @@ def place_bracket(side: str, symbol: str, entry: float):
 
     qty = compute_qty(entry)
 
-    # === TP / SL CALCULATION ===
+    # ===== TP / SL =====
     if side == "buy":
         tp = entry * (1 + TP_PERCENT)
         sl = entry * (1 - SL_PERCENT)
