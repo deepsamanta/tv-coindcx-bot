@@ -3,23 +3,24 @@ from coindcx import place_order, normalize_symbol
 
 app = Flask(__name__)
 
-
 @app.route("/webhook", methods=["POST"])
 def webhook():
-    data = request.get_json(force=True)
+    try:
+        data = request.get_json(force=True)
 
-    signal = data["signal"].lower()
-    symbol = normalize_symbol(data["symbol"])
-    price = float(data["price"])
+        signal = data["signal"].lower()
+        symbol = normalize_symbol(data["symbol"])
+        price = float(data["price"])
 
-    print(f"[WEBHOOK] {signal.upper()} {symbol} @ {price}")
+        print("[WEBHOOK RECEIVED]", data, flush=True)
 
-    if signal not in ("buy", "sell"):
-        return jsonify({"error": "invalid signal"}), 400
+        place_order(signal, symbol, price)
 
-    place_order(signal, symbol, price)
+        return jsonify({"status": "sent"})
 
-    return jsonify({"status": "order sent"})
+    except Exception as e:
+        print("❌ WEBHOOK ERROR:", str(e), flush=True)
+        return jsonify({"error": str(e)}), 500
 
 
 if __name__ == "__main__":

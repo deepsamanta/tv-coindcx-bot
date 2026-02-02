@@ -1,10 +1,11 @@
 import time, hmac, hashlib, json, requests
-from decimal import Decimal, ROUND_DOWN
+from decimal import Decimal, getcontext
 from config import COINDCX_KEY, COINDCX_SECRET, CAPITAL_USDT, LEVERAGE, TEST_MODE
 
+getcontext().prec = 28
 BASE_URL = "https://api.coindcx.com"
 
-# FIXED STEP SIZE MAP (YOU CHOSE THIS)
+# FIXED STEP SIZE MAP
 SYMBOL_STEPS = {
     "BTCUSDT": Decimal("0.001"),
     "ETHUSDT": Decimal("0.001"),
@@ -15,8 +16,6 @@ SYMBOL_STEPS = {
 }
 
 
-# ---------- HELPERS ---------- #
-
 def normalize_symbol(symbol: str) -> str:
     symbol = symbol.upper()
     if "USDT" in symbol:
@@ -25,74 +24,85 @@ def normalize_symbol(symbol: str) -> str:
 
 
 def fut_pair(symbol):
-    base = symbol.replace("USDT", "")
-    return f"B-{base}_USDT"
+    return f"B-{symbol.replace('USDT', '')}_USDT"
 
 
 def sign(body):
     payload = json.dumps(body, separators=(",", ":"))
-    signature = hmac.new(
+    sig = hmac.new(
         COINDCX_SECRET.encode(),
         payload.encode(),
         hashlib.sha256
     ).hexdigest()
 
-    headers = {
+    return payload, {
         "Content-Type": "application/json",
         "X-AUTH-APIKEY": COINDCX_KEY,
-        "X-AUTH-SIGNATURE": signature
+        "X-AUTH-SIGNATURE": sig
     }
-    return payload, headers
 
 
+# 🔒 THIS IS THE KEY FIX
 def compute_qty(entry_price, symbol):
     symbol = normalize_symbol(symbol)
-    step = SYMBOL_STEPS.get(symbol, Decimal("0.001"))
+    step = SYMBOL_STEPS.get(symbol)
+
+    if step is None:
+        raise ValueError(f"Step size missing for {symbol}")
 
     exposure = Decimal(str(CAPITAL_USDT)) * Decimal(str(LEVERAGE))
     raw_qty = exposure / Decimal(str(entry_price))
 
-    qty = (raw_qty // step) * step
+    # EXACT divisibility enforcement
+    qty = raw_qty - (raw_qty % step)
+
     if qty <= 0:
         qty = step
+
+    # Final safety check
+    if qty % step != 0:
+        raise ValueError(f"Invalid qty {qty} for step {step}")
 
     return float(qty)
 
 
-# ---------- PLACE ORDER ---------- #
-
 def place_order(side, symbol, entry):
-    symbol = normalize_symbol(symbol)
-    qty = compute_qty(entry, symbol)
+    try:
+        symbol = normalize_symbol(symbol)
+        qty = compute_qty(entry, symbol)
 
-    entry = Decimal(str(entry))
+        entry_d = Decimal(str(entry))
+        tp = entry_d * (Decimal("1.04") if side == "buy" else Decimal("0.96"))
+        sl = entry_d * (Decimal("0.95") if side == "buy" else Decimal("1.05"))
 
-    tp = entry * (Decimal("1.04") if side == "buy" else Decimal("0.96"))
-    sl = entry * (Decimal("0.95") if side == "buy" else Decimal("1.05"))
-
-    body = {
-        "timestamp": int(time.time() * 1000),
-        "order": {
-            "side": side,
-            "pair": fut_pair(symbol),
-            "order_type": "market_order",
-            "total_quantity": qty,
-            "leverage": LEVERAGE,
-            "take_profit_price": float(tp),
-            "stop_loss_price": float(sl)
+        body = {
+            "timestamp": int(time.time() * 1000),
+            "order": {
+                "side": side,
+                "pair": fut_pair(symbol),
+                "order_type": "market_order",
+                "total_quantity": qty,
+                "leverage": LEVERAGE,
+                "take_profit_price": float(tp),
+                "stop_loss_price": float(sl)
+            }
         }
-    }
 
-    if TEST_MODE:
-        print("[TEST_MODE] ORDER:", body)
-        return
+        print("[ORDER PAYLOAD]", body, flush=True)
 
-    payload, headers = sign(body)
+        if TEST_MODE:
+            print("[TEST_MODE] Skipped API call", flush=True)
+            return
 
-    r = requests.post(
-        f"{BASE_URL}/exchange/v1/derivatives/futures/orders/create",
-        data=payload,
-        headers=headers
-    )
+        payload, headers = sign(body)
+        r = requests.post(
+            f"{BASE_URL}/exchange/v1/derivatives/futures/orders/create",
+            data=payload,
+            headers=headers,
+            timeout=10
+        )
 
-    print("[COINDCX]", r.status_code, r.text)
+        print("[COINDCX]", r.status_code, r.text, flush=True)
+
+    except Exception as e:
+        print("❌ ORDER ERROR:", str(e), flush=True)
