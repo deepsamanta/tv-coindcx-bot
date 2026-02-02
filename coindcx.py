@@ -2,8 +2,19 @@ import time, hmac, hashlib, json, requests, math
 from config import COINDCX_KEY, COINDCX_SECRET, CAPITAL_USDT, LEVERAGE, TEST_MODE
 
 BASE_URL = "https://api.coindcx.com"
-STEP = 0.001  # futures precision
 
+# ✅ FIXED STEP SIZE PER SYMBOL
+SYMBOL_STEPS = {
+    "BTCUSDT": 0.001,
+    "ETHUSDT": 0.001,
+    "BNBUSDT": 0.01,
+    "SOLUSDT": 0.01,
+    "XRPUSDT": 0.1,
+    "DOGEUSDT": 1,
+}
+
+
+# ---------- HELPERS ---------- #
 
 def fut_pair(symbol):
     base = symbol.replace("USDT", "")
@@ -18,25 +29,27 @@ def sign(body):
         hashlib.sha256
     ).hexdigest()
 
-    return payload, {
+    headers = {
         "Content-Type": "application/json",
         "X-AUTH-APIKEY": COINDCX_KEY,
         "X-AUTH-SIGNATURE": signature
     }
+    return payload, headers
 
 
-def apply_precision(qty):
-    qty = math.floor(qty / STEP) * STEP
-    return max(STEP, round(qty, 6))
+def apply_precision(qty, symbol):
+    step = SYMBOL_STEPS.get(symbol, 0.001)
+    qty = math.floor(qty / step) * step
+    return max(step, round(qty, 6))
 
 
-def compute_qty(entry_price):
+def compute_qty(entry_price, symbol):
     exposure = CAPITAL_USDT * LEVERAGE
     raw_qty = exposure / entry_price
-    return apply_precision(raw_qty)
+    return apply_precision(raw_qty, symbol)
 
 
-# -------- POSITIONS -------- #
+# ---------- POSITION HANDLING ---------- #
 
 def get_all_positions():
     body = {"timestamp": int(time.time() * 1000)}
@@ -53,7 +66,7 @@ def get_all_positions():
 def get_position_for_symbol(symbol):
     pair = fut_pair(symbol)
     for p in get_all_positions():
-        if p.get("pair") == pair and float(p.get("size", 0)) != 0:
+        if p.get("pair") == pair and abs(float(p.get("size", 0))) > 0:
             return p
     return None
 
@@ -90,10 +103,10 @@ def close_position(symbol):
     print("[COINDCX CLOSE]", r.status_code, r.text)
 
 
-# -------- PLACE ORDER -------- #
+# ---------- OPEN POSITION ---------- #
 
 def place_bracket(side, symbol, entry):
-    qty = compute_qty(entry)
+    qty = compute_qty(entry, symbol)
 
     tp = entry * (1.04 if side == "buy" else 0.96)
     sl = entry * (0.95 if side == "buy" else 1.05)
