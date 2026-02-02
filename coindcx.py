@@ -5,7 +5,7 @@ from config import COINDCX_KEY, COINDCX_SECRET, CAPITAL_USDT, LEVERAGE, TEST_MOD
 getcontext().prec = 28
 BASE_URL = "https://api.coindcx.com"
 
-# FIXED STEP SIZE MAP
+# ✅ Quantity step per symbol (your choice)
 SYMBOL_STEPS = {
     "BTCUSDT": Decimal("0.001"),
     "ETHUSDT": Decimal("0.001"),
@@ -15,6 +15,10 @@ SYMBOL_STEPS = {
     "DOGEUSDT": Decimal("1"),
 }
 
+PRICE_TICK = Decimal("0.01")  # TP / SL tick size
+
+
+# ---------- HELPERS ---------- #
 
 def normalize_symbol(symbol: str) -> str:
     symbol = symbol.upper()
@@ -23,57 +27,62 @@ def normalize_symbol(symbol: str) -> str:
     return symbol
 
 
-def fut_pair(symbol):
+def fut_pair(symbol: str) -> str:
     return f"B-{symbol.replace('USDT', '')}_USDT"
 
 
-def sign(body):
+def sign(body: dict):
     payload = json.dumps(body, separators=(",", ":"))
-    sig = hmac.new(
+    signature = hmac.new(
         COINDCX_SECRET.encode(),
         payload.encode(),
         hashlib.sha256
     ).hexdigest()
 
-    return payload, {
+    headers = {
         "Content-Type": "application/json",
         "X-AUTH-APIKEY": COINDCX_KEY,
-        "X-AUTH-SIGNATURE": sig
+        "X-AUTH-SIGNATURE": signature
     }
+    return payload, headers
 
 
-# 🔒 THIS IS THE KEY FIX
-def compute_qty(entry_price, symbol):
+# ---------- CORE LOGIC ---------- #
+
+def compute_qty(entry_price: float, symbol: str) -> float:
     symbol = normalize_symbol(symbol)
     step = SYMBOL_STEPS.get(symbol)
 
     if step is None:
-        raise ValueError(f"Step size missing for {symbol}")
+        raise ValueError(f"No step size defined for {symbol}")
 
     exposure = Decimal(str(CAPITAL_USDT)) * Decimal(str(LEVERAGE))
     raw_qty = exposure / Decimal(str(entry_price))
 
-    # EXACT divisibility enforcement
     qty = raw_qty - (raw_qty % step)
-
     if qty <= 0:
         qty = step
-
-    # Final safety check
-    if qty % step != 0:
-        raise ValueError(f"Invalid qty {qty} for step {step}")
 
     return float(qty)
 
 
-def place_order(side, symbol, entry):
+def place_order(side: str, symbol: str, entry_price: float):
     try:
         symbol = normalize_symbol(symbol)
-        qty = compute_qty(entry, symbol)
+        qty = compute_qty(entry_price, symbol)
 
-        entry_d = Decimal(str(entry))
-        tp = entry_d * (Decimal("1.04") if side == "buy" else Decimal("0.96"))
-        sl = entry_d * (Decimal("0.95") if side == "buy" else Decimal("1.05"))
+        entry = Decimal(str(entry_price))
+
+        if side == "buy":
+            tp = entry * Decimal("1.04")
+            sl = entry * Decimal("0.95")
+        else:
+            tp = entry * Decimal("0.96")
+            sl = entry * Decimal("1.05")
+
+        # ✅ Force TP / SL price precision
+        tp = (tp // PRICE_TICK) * PRICE_TICK
+        sl = (sl // PRICE_TICK) * PRICE_TICK
 
         body = {
             "timestamp": int(time.time() * 1000),
@@ -91,7 +100,7 @@ def place_order(side, symbol, entry):
         print("[ORDER PAYLOAD]", body, flush=True)
 
         if TEST_MODE:
-            print("[TEST_MODE] Skipped API call", flush=True)
+            print("[TEST_MODE] Order not sent", flush=True)
             return
 
         payload, headers = sign(body)

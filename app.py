@@ -3,6 +3,7 @@ from coindcx import place_order, normalize_symbol
 
 app = Flask(__name__)
 
+
 @app.route("/webhook", methods=["POST"])
 def webhook():
     try:
@@ -13,6 +14,9 @@ def webhook():
         price = float(data["price"])
 
         print("[WEBHOOK RECEIVED]", data, flush=True)
+
+        if signal not in ("buy", "sell"):
+            return jsonify({"error": "invalid signal"}), 400
 
         place_order(signal, symbol, price)
 
