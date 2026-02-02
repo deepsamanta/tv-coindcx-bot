@@ -1,20 +1,28 @@
-import time, hmac, hashlib, json, requests, math
+import time, hmac, hashlib, json, requests
+from decimal import Decimal, ROUND_DOWN
 from config import COINDCX_KEY, COINDCX_SECRET, CAPITAL_USDT, LEVERAGE, TEST_MODE
 
 BASE_URL = "https://api.coindcx.com"
 
-# ✅ FIXED STEP SIZE PER SYMBOL
+# FIXED STEP SIZE MAP (YOU CHOSE THIS)
 SYMBOL_STEPS = {
-    "BTCUSDT": 0.001,
-    "ETHUSDT": 0.001,
-    "BNBUSDT": 0.01,
-    "SOLUSDT": 0.01,
-    "XRPUSDT": 0.1,
-    "DOGEUSDT": 1,
+    "BTCUSDT": Decimal("0.001"),
+    "ETHUSDT": Decimal("0.001"),
+    "BNBUSDT": Decimal("0.01"),
+    "SOLUSDT": Decimal("0.01"),
+    "XRPUSDT": Decimal("0.1"),
+    "DOGEUSDT": Decimal("1"),
 }
 
 
 # ---------- HELPERS ---------- #
+
+def normalize_symbol(symbol: str) -> str:
+    symbol = symbol.upper()
+    if "USDT" in symbol:
+        return symbol.split("USDT")[0] + "USDT"
+    return symbol
+
 
 def fut_pair(symbol):
     base = symbol.replace("USDT", "")
@@ -37,79 +45,30 @@ def sign(body):
     return payload, headers
 
 
-def apply_precision(qty, symbol):
-    step = SYMBOL_STEPS.get(symbol, 0.001)
-    qty = math.floor(qty / step) * step
-    return max(step, round(qty, 6))
-
-
 def compute_qty(entry_price, symbol):
-    exposure = CAPITAL_USDT * LEVERAGE
-    raw_qty = exposure / entry_price
-    return apply_precision(raw_qty, symbol)
+    symbol = normalize_symbol(symbol)
+    step = SYMBOL_STEPS.get(symbol, Decimal("0.001"))
+
+    exposure = Decimal(str(CAPITAL_USDT)) * Decimal(str(LEVERAGE))
+    raw_qty = exposure / Decimal(str(entry_price))
+
+    qty = (raw_qty // step) * step
+    if qty <= 0:
+        qty = step
+
+    return float(qty)
 
 
-# ---------- POSITION HANDLING ---------- #
+# ---------- PLACE ORDER ---------- #
 
-def get_all_positions():
-    body = {"timestamp": int(time.time() * 1000)}
-    payload, headers = sign(body)
-
-    r = requests.post(
-        f"{BASE_URL}/exchange/v1/derivatives/futures/positions",
-        data=payload,
-        headers=headers
-    )
-    return r.json() if r.status_code == 200 else []
-
-
-def get_position_for_symbol(symbol):
-    pair = fut_pair(symbol)
-    for p in get_all_positions():
-        if p.get("pair") == pair and abs(float(p.get("size", 0))) > 0:
-            return p
-    return None
-
-
-def close_position(symbol):
-    pos = get_position_for_symbol(symbol)
-    if not pos:
-        return
-
-    side = "sell" if pos["side"] == "buy" else "buy"
-
-    body = {
-        "timestamp": int(time.time() * 1000),
-        "order": {
-            "side": side,
-            "pair": pos["pair"],
-            "order_type": "market_order",
-            "total_quantity": abs(float(pos["size"])),
-            "leverage": LEVERAGE
-        }
-    }
-
-    payload, headers = sign(body)
-
-    if TEST_MODE:
-        print("[TEST_MODE] CLOSE:", body)
-        return
-
-    r = requests.post(
-        f"{BASE_URL}/exchange/v1/derivatives/futures/orders/create",
-        data=payload,
-        headers=headers
-    )
-    print("[COINDCX CLOSE]", r.status_code, r.text)
-
-
-# ---------- OPEN POSITION ---------- #
-
-def place_bracket(side, symbol, entry):
+def place_order(side, symbol, entry):
+    symbol = normalize_symbol(symbol)
     qty = compute_qty(entry, symbol)
 
-    tp = entry * (1.04 if side == "buy" else 0.96)
-    sl = entry * (0.95 if side == "buy" else 1.05)
+    entry = Decimal(str(entry))
+
+    tp = entry * (Decimal("1.04") if side == "buy" else Decimal("0.96"))
+    sl = entry * (Decimal("0.95") if side == "buy" else Decimal("1.05"))
 
     body = {
         "timestamp": int(time.time() * 1000),
@@ -119,13 +78,13 @@ def place_bracket(side, symbol, entry):
             "order_type": "market_order",
             "total_quantity": qty,
             "leverage": LEVERAGE,
-            "take_profit_price": round(tp, 2),
-            "stop_loss_price": round(sl, 2)
+            "take_profit_price": float(tp),
+            "stop_loss_price": float(sl)
         }
     }
 
     if TEST_MODE:
-        print("[TEST_MODE] OPEN:", body)
+        print("[TEST_MODE] ORDER:", body)
         return
 
     payload, headers = sign(body)
@@ -135,4 +94,5 @@ def place_bracket(side, symbol, entry):
         data=payload,
         headers=headers
     )
-    print("[COINDCX OPEN]", r.status_code, r.text)
+
+    print("[COINDCX]", r.status_code, r.text)
