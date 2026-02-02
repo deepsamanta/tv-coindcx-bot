@@ -1,35 +1,46 @@
-from flask import Flask, request
-from coindcx import place_bracket
+from flask import Flask, request, jsonify
+from coindcx import (
+    place_bracket,
+    close_position,
+    get_position_for_symbol
+)
 
 app = Flask(__name__)
-
-CURRENT_POSITION = None  # LONG | SHORT | None
 
 
 @app.route("/webhook", methods=["POST"])
 def webhook():
-    global CURRENT_POSITION
+    data = request.get_json(force=True)
 
-    data = request.json
-    print("Webhook received:", data)
+    signal = data["signal"].lower()
+    symbol = data["symbol"]
+    price = float(data["price"])
 
-    signal = data.get("signal")
-    symbol = data.get("symbol")
-    price = float(data.get("price"))
+    print(f"[WEBHOOK] {signal.upper()} {symbol} @ {price}")
 
-    if signal == "BUY" and CURRENT_POSITION != "LONG":
+    pos = get_position_for_symbol(symbol)
+
+    if signal == "buy":
+        if pos and pos["side"] == "buy":
+            print(f"🚫 {symbol}: already BUY")
+            return jsonify({"status": "ignored"})
+
+        if pos and pos["side"] == "sell":
+            close_position(symbol)
+
         place_bracket("buy", symbol, price)
-        CURRENT_POSITION = "LONG"
 
-    elif signal == "SELL" and CURRENT_POSITION != "SHORT":
+    elif signal == "sell":
+        if pos and pos["side"] == "sell":
+            print(f"🚫 {symbol}: already SELL")
+            return jsonify({"status": "ignored"})
+
+        if pos and pos["side"] == "buy":
+            close_position(symbol)
+
         place_bracket("sell", symbol, price)
-        CURRENT_POSITION = "SHORT"
 
-    elif signal == "EXIT":
-        CURRENT_POSITION = None
-        print("Exit signal received")
-
-    return {"status": "ok"}
+    return jsonify({"status": "ok"})
 
 
 if __name__ == "__main__":
