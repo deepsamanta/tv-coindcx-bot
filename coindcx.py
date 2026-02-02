@@ -5,7 +5,8 @@ from config import COINDCX_KEY, COINDCX_SECRET, CAPITAL_USDT, LEVERAGE, TEST_MOD
 getcontext().prec = 28
 BASE_URL = "https://api.coindcx.com"
 
-# ✅ Quantity step per symbol (your choice)
+# ================== PRECISION RULES ==================
+
 SYMBOL_STEPS = {
     "BTCUSDT": Decimal("0.001"),
     "ETHUSDT": Decimal("0.001"),
@@ -15,10 +16,18 @@ SYMBOL_STEPS = {
     "DOGEUSDT": Decimal("1"),
 }
 
-PRICE_TICK = Decimal("0.01")  # TP / SL tick size
+PRICE_TICK = Decimal("0.01")  # TP / SL precision
 
+# ================== SPECIAL RULES ==================
 
-# ---------- HELPERS ---------- #
+SPECIAL_RULES = {
+    "BTCUSDT": {
+        "capital": Decimal("13"),
+        "leverage": 20
+    }
+}
+
+# ================== HELPERS ==================
 
 def normalize_symbol(symbol: str) -> str:
     symbol = symbol.upper()
@@ -46,8 +55,7 @@ def sign(body: dict):
     }
     return payload, headers
 
-
-# ---------- CORE LOGIC ---------- #
+# ================== CORE LOGIC ==================
 
 def compute_qty(entry_price: float, symbol: str) -> float:
     symbol = normalize_symbol(symbol)
@@ -56,7 +64,15 @@ def compute_qty(entry_price: float, symbol: str) -> float:
     if step is None:
         raise ValueError(f"No step size defined for {symbol}")
 
-    exposure = Decimal(str(CAPITAL_USDT)) * Decimal(str(LEVERAGE))
+    # Apply BTC override if exists
+    if symbol in SPECIAL_RULES:
+        capital = SPECIAL_RULES[symbol]["capital"]
+        leverage = Decimal(str(SPECIAL_RULES[symbol]["leverage"]))
+    else:
+        capital = Decimal(str(CAPITAL_USDT))
+        leverage = Decimal(str(LEVERAGE))
+
+    exposure = capital * leverage
     raw_qty = exposure / Decimal(str(entry_price))
 
     qty = raw_qty - (raw_qty % step)
@@ -71,6 +87,9 @@ def place_order(side: str, symbol: str, entry_price: float):
         symbol = normalize_symbol(symbol)
         qty = compute_qty(entry_price, symbol)
 
+        # Leverage selection
+        leverage = SPECIAL_RULES.get(symbol, {}).get("leverage", LEVERAGE)
+
         entry = Decimal(str(entry_price))
 
         if side == "buy":
@@ -80,7 +99,7 @@ def place_order(side: str, symbol: str, entry_price: float):
             tp = entry * Decimal("0.96")
             sl = entry * Decimal("1.05")
 
-        # ✅ Force TP / SL price precision
+        # Force TP / SL precision
         tp = (tp // PRICE_TICK) * PRICE_TICK
         sl = (sl // PRICE_TICK) * PRICE_TICK
 
@@ -91,7 +110,7 @@ def place_order(side: str, symbol: str, entry_price: float):
                 "pair": fut_pair(symbol),
                 "order_type": "market_order",
                 "total_quantity": qty,
-                "leverage": LEVERAGE,
+                "leverage": leverage,
                 "take_profit_price": float(tp),
                 "stop_loss_price": float(sl)
             }
