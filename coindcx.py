@@ -6,9 +6,7 @@ import requests
 from decimal import Decimal, getcontext
 from config import COINDCX_KEY, COINDCX_SECRET, CAPITAL_USDT, LEVERAGE, TEST_MODE
 
-# High precision for Decimal math
 getcontext().prec = 28
-
 BASE_URL = "https://api.coindcx.com"
 
 # ===================== QUANTITY STEP PER SYMBOL =====================
@@ -45,9 +43,6 @@ SPECIAL_RULES = {
 # ===================== HELPERS =====================
 
 def normalize_symbol(symbol: str) -> str:
-    """
-    Converts symbols like BTCUSDT.P, BTCUSDT_1 → BTCUSDT
-    """
     symbol = symbol.upper()
     if "USDT" in symbol:
         return symbol.split("USDT")[0] + "USDT"
@@ -55,13 +50,10 @@ def normalize_symbol(symbol: str) -> str:
 
 
 def fut_pair(symbol: str) -> str:
-    """
-    BTCUSDT → B-BTC_USDT (CoinDCX futures format)
-    """
     return f"B-{symbol.replace('USDT', '')}_USDT"
 
 
-def sign(body: dict):
+def sign_request(body: dict):
     payload = json.dumps(body, separators=(",", ":"))
     signature = hmac.new(
         COINDCX_SECRET.encode("utf-8"),
@@ -76,16 +68,69 @@ def sign(body: dict):
     }
     return payload, headers
 
-# ===================== CORE LOGIC =====================
+# ===================== POSITION HANDLING =====================
+
+def get_open_positions():
+    body = {
+        "timestamp": int(time.time() * 1000),
+        "page": "1",
+        "size": "50",
+        "margin_currency_short_name": ["USDT"]
+    }
+
+    payload, headers = sign_request(body)
+    url = BASE_URL + "/exchange/v1/derivatives/futures/positions"
+
+    response = requests.post(url, data=payload, headers=headers)
+    response.raise_for_status()
+
+    positions = response.json()
+
+    # Only active positions
+    return [
+        pos for pos in positions
+        if float(pos.get("active_pos", 0)) != 0
+    ]
+
+
+def exit_position(position_id):
+    body = {
+        "timestamp": int(time.time() * 1000),
+        "id": position_id
+    }
+
+    payload, headers = sign_request(body)
+    url = BASE_URL + "/exchange/v1/derivatives/futures/positions/exit"
+
+    response = requests.post(url, data=payload, headers=headers)
+    response.raise_for_status()
+
+    print("[POSITION EXITED]", response.json(), flush=True)
+    return response.json()
+
+
+def exit_if_position_exists(symbol):
+    symbol = normalize_symbol(symbol)
+    pair = fut_pair(symbol)
+
+    positions = get_open_positions()
+
+    for pos in positions:
+        if pos.get("pair") == pair:
+            print(f"[INFO] Existing position found for {symbol}, exiting first", flush=True)
+            exit_position(pos["id"])
+            time.sleep(1)  # small delay to let exchange process
+            break
+
+# ===================== ORDER LOGIC =====================
 
 def compute_qty(entry_price: float, symbol: str) -> float:
     symbol = normalize_symbol(symbol)
-
     step = SYMBOL_STEPS.get(symbol)
+
     if step is None:
         raise ValueError(f"No quantity step defined for {symbol}")
 
-    # Apply BTC override if present
     if symbol in SPECIAL_RULES:
         capital = SPECIAL_RULES[symbol]["capital"]
         leverage = Decimal(str(SPECIAL_RULES[symbol]["leverage"]))
@@ -96,7 +141,6 @@ def compute_qty(entry_price: float, symbol: str) -> float:
     exposure = capital * leverage
     raw_qty = exposure / Decimal(str(entry_price))
 
-    # Force divisibility by step
     qty = raw_qty - (raw_qty % step)
     if qty <= 0:
         qty = step
@@ -108,14 +152,14 @@ def place_order(side: str, symbol: str, entry_price: float):
     try:
         symbol = normalize_symbol(symbol)
 
-        qty = compute_qty(entry_price, symbol)
+        # 🔴 EXIT EXISTING POSITION FIRST
+        exit_if_position_exists(symbol)
 
-        # Leverage selection
+        qty = compute_qty(entry_price, symbol)
         leverage = SPECIAL_RULES.get(symbol, {}).get("leverage", LEVERAGE)
 
         entry = Decimal(str(entry_price))
 
-        # TP / SL calculation
         if side == "buy":
             tp = entry * Decimal("1.04")
             sl = entry * Decimal("0.95")
@@ -123,9 +167,7 @@ def place_order(side: str, symbol: str, entry_price: float):
             tp = entry * Decimal("0.96")
             sl = entry * Decimal("1.05")
 
-        # Apply price tick precision (CRITICAL FIX)
         price_tick = PRICE_TICKS.get(symbol, Decimal("0.01"))
-
         tp = (tp // price_tick) * price_tick
         sl = (sl // price_tick) * price_tick
 
@@ -148,9 +190,9 @@ def place_order(side: str, symbol: str, entry_price: float):
             print("[TEST_MODE] Order not sent", flush=True)
             return
 
-        payload, headers = sign(body)
+        payload, headers = sign_request(body)
         response = requests.post(
-            f"{BASE_URL}/exchange/v1/derivatives/futures/orders/create",
+            BASE_URL + "/exchange/v1/derivatives/futures/orders/create",
             data=payload,
             headers=headers,
             timeout=10
