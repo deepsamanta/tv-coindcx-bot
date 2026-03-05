@@ -177,7 +177,7 @@ def place_order(side: str, symbol: str, entry_price: float):
                 "side": side,
                 "pair": fut_pair(symbol),
                 "order_type": "limit_order",
-                "price": entry_price, 
+                "price": (entry_price // price_tick) * price_tick, 
                 "total_quantity": qty,
                 "leverage": leverage,
                 "take_profit_price": float(tp),
