@@ -159,6 +159,11 @@ def place_order(side: str, symbol: str, entry_price: float):
         leverage = SPECIAL_RULES.get(symbol, {}).get("leverage", LEVERAGE)
 
         entry = Decimal(str(entry_price))
+        price_tick = PRICE_TICKS.get(symbol, Decimal("0.01"))
+
+        # FIX ENTRY PRICE TO VALID TICK
+        entry = (entry // price_tick) * price_tick
+        entry_price = float(entry)
 
         if side == "buy":
             tp = entry * Decimal("1.04")
@@ -170,7 +175,6 @@ def place_order(side: str, symbol: str, entry_price: float):
         price_tick = PRICE_TICKS.get(symbol, Decimal("0.01"))
         tp = (tp // price_tick) * price_tick
         sl = (sl // price_tick) * price_tick
-        newentry = (entry_price // price_tick) * price_tick
 
         body = {
             "timestamp": int(time.time() * 1000),
@@ -178,7 +182,7 @@ def place_order(side: str, symbol: str, entry_price: float):
                 "side": side,
                 "pair": fut_pair(symbol),
                 "order_type": "limit_order",
-                "price": newentry, 
+                "price": entry_price, 
                 "total_quantity": qty,
                 "leverage": leverage,
                 "take_profit_price": float(tp),
