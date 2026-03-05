@@ -170,6 +170,7 @@ def place_order(side: str, symbol: str, entry_price: float):
         price_tick = PRICE_TICKS.get(symbol, Decimal("0.01"))
         tp = (tp // price_tick) * price_tick
         sl = (sl // price_tick) * price_tick
+        newentry = (entry_price // price_tick) * price_tick
 
         body = {
             "timestamp": int(time.time() * 1000),
@@ -177,7 +178,7 @@ def place_order(side: str, symbol: str, entry_price: float):
                 "side": side,
                 "pair": fut_pair(symbol),
                 "order_type": "limit_order",
-                "price": (entry_price // price_tick) * price_tick, 
+                "price": newentry, 
                 "total_quantity": qty,
                 "leverage": leverage,
                 "take_profit_price": float(tp),
