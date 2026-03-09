@@ -9,16 +9,10 @@ from config import COINDCX_KEY, COINDCX_SECRET, CAPITAL_USDT, LEVERAGE, TEST_MOD
 getcontext().prec = 28
 BASE_URL = "https://api.coindcx.com"
 
-# ===================== QUANTITY STEP PER SYMBOL =====================
+# ===================== LOAD MARKET DATA =====================
 
-SYMBOL_STEPS = {
-    "BTCUSDT": Decimal("0.001"),
-    "ETHUSDT": Decimal("0.001"),
-    "BNBUSDT": Decimal("0.01"),
-    "SOLUSDT": Decimal("0.01"),
-    "XRPUSDT": Decimal("0.1"),
-    "DOGEUSDT": Decimal("1"),
-}
+with open("markets.json", "r") as f:
+    MARKET_DATA = json.load(f)
 
 # ===================== PRICE TICK (TP / SL) PER SYMBOL =====================
 
@@ -53,6 +47,31 @@ def fut_pair(symbol: str) -> str:
     return f"B-{symbol.replace('USDT', '')}_USDT"
 
 
+# ===================== GET QUANTITY STEP FROM JSON =====================
+
+def get_quantity_step(symbol: str):
+
+    symbol = normalize_symbol(symbol)
+
+    for coin in MARKET_DATA:
+
+        coindcx_symbol = coin.get("coindcx_name", "").upper()
+
+        if coindcx_symbol == symbol:
+
+            min_qty = Decimal(str(coin.get("min_quantity", 0)))
+
+            precision = int(coin.get("target_currency_precision", 0))
+
+            precision_step = Decimal("1") / (Decimal("10") ** precision)
+
+            step = max(min_qty, precision_step)
+
+            return step
+
+    raise ValueError(f"No quantity step defined for {symbol}")
+
+
 def sign_request(body: dict):
     payload = json.dumps(body, separators=(",", ":"))
     signature = hmac.new(
@@ -67,6 +86,7 @@ def sign_request(body: dict):
         "X-AUTH-SIGNATURE": signature
     }
     return payload, headers
+
 
 # ===================== POSITION HANDLING =====================
 
@@ -86,7 +106,6 @@ def get_open_positions():
 
     positions = response.json()
 
-    # Only active positions
     return [
         pos for pos in positions
         if float(pos.get("active_pos", 0)) != 0
@@ -119,17 +138,17 @@ def exit_if_position_exists(symbol):
         if pos.get("pair") == pair:
             print(f"[INFO] Existing position found for {symbol}, exiting first", flush=True)
             exit_position(pos["id"])
-            time.sleep(1)  # small delay to let exchange process
+            time.sleep(1)
             break
+
 
 # ===================== ORDER LOGIC =====================
 
-def compute_qty(entry_price: float, symbol: str) -> float:
-    symbol = normalize_symbol(symbol)
-    step = SYMBOL_STEPS.get(symbol)
+def compute_qty(entry_price: float, symbol: str):
 
-    if step is None:
-        raise ValueError(f"No quantity step defined for {symbol}")
+    symbol = normalize_symbol(symbol)
+
+    step = get_quantity_step(symbol)
 
     if symbol in SPECIAL_RULES:
         capital = SPECIAL_RULES[symbol]["capital"]
@@ -142,6 +161,7 @@ def compute_qty(entry_price: float, symbol: str) -> float:
     raw_qty = exposure / Decimal(str(entry_price))
 
     qty = raw_qty - (raw_qty % step)
+
     if qty <= 0:
         qty = step
 
@@ -152,7 +172,7 @@ def place_order(side: str, symbol: str, entry_price: float):
     try:
         symbol = normalize_symbol(symbol)
 
-        # 🔴 EXIT EXISTING POSITION FIRST
+        # EXIT EXISTING POSITION FIRST
         exit_if_position_exists(symbol)
 
         qty = compute_qty(entry_price, symbol)
@@ -161,7 +181,6 @@ def place_order(side: str, symbol: str, entry_price: float):
         entry = Decimal(str(entry_price))
         price_tick = PRICE_TICKS.get(symbol, Decimal("0.01"))
 
-        # FIX ENTRY PRICE TO VALID TICK
         entry = (entry // price_tick) * price_tick
         entry_price = float(entry)
 
@@ -172,7 +191,6 @@ def place_order(side: str, symbol: str, entry_price: float):
             tp = entry * Decimal("0.96")
             sl = entry * Decimal("1.05")
 
-        price_tick = PRICE_TICKS.get(symbol, Decimal("0.01"))
         tp = (tp // price_tick) * price_tick
         sl = (sl // price_tick) * price_tick
 
@@ -182,7 +200,7 @@ def place_order(side: str, symbol: str, entry_price: float):
                 "side": side,
                 "pair": fut_pair(symbol),
                 "order_type": "limit_order",
-                "price": entry_price, 
+                "price": entry_price,
                 "total_quantity": qty,
                 "leverage": leverage,
                 "take_profit_price": float(tp),
