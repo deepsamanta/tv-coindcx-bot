@@ -66,6 +66,14 @@ def get_quantity_step(symbol: str):
 
             step = max(min_qty, precision_step)
 
+            # ===== DEBUG LOG =====
+            print(f"[MARKET DEBUG] SYMBOL={symbol}", flush=True)
+            print("[MARKET DEBUG] FOUND IN FILE", flush=True)
+            print(f"[MARKET DEBUG] MIN_QTY={min_qty}", flush=True)
+            print(f"[MARKET DEBUG] TARGET_PRECISION={precision}", flush=True)
+            print(f"[MARKET DEBUG] PRECISION_STEP={precision_step}", flush=True)
+            print(f"[MARKET DEBUG] SELECTED_STEP={step}", flush=True)
+
             return step
 
     raise ValueError(f"No quantity step defined for {symbol}")
@@ -179,14 +187,22 @@ def compute_qty(entry_price: float, symbol: str):
 
     raw_qty = exposure / Decimal(str(entry_price))
 
-    # ROUND TO CLOSEST STEP
     qty = (raw_qty / step).quantize(Decimal("1")) * step
 
     if qty <= 0:
         qty = step
 
-    # Match step precision exactly
     qty = qty.quantize(step)
+
+    # ===== DEBUG LOG =====
+    print(f"[QTY DEBUG] SYMBOL={symbol}", flush=True)
+    print(f"[QTY DEBUG] ENTRY_PRICE={entry_price}", flush=True)
+    print(f"[QTY DEBUG] CAPITAL={capital}", flush=True)
+    print(f"[QTY DEBUG] LEVERAGE={leverage}", flush=True)
+    print(f"[QTY DEBUG] EXPOSURE={exposure}", flush=True)
+    print(f"[QTY DEBUG] RAW_QTY={raw_qty}", flush=True)
+    print(f"[QTY DEBUG] STEP={step}", flush=True)
+    print(f"[QTY DEBUG] FINAL_QTY={qty}", flush=True)
 
     return float(qty)
 
@@ -199,7 +215,6 @@ def place_order(side: str, symbol: str, entry_price: float):
 
         symbol = normalize_symbol(symbol)
 
-        # EXIT EXISTING POSITION FIRST
         exit_if_position_exists(symbol)
 
         qty = compute_qty(entry_price, symbol)
@@ -210,25 +225,18 @@ def place_order(side: str, symbol: str, entry_price: float):
 
         price_tick = PRICE_TICKS.get(symbol, Decimal("0.01"))
 
-        # FIX ENTRY PRICE TO VALID TICK
         entry = (entry // price_tick) * price_tick
 
         entry_price = float(entry)
 
         if side == "buy":
-
             tp = entry * Decimal("1.04")
-
             sl = entry * Decimal("0.95")
-
         else:
-
             tp = entry * Decimal("0.96")
-
             sl = entry * Decimal("1.05")
 
         tp = (tp // price_tick) * price_tick
-
         sl = (sl // price_tick) * price_tick
 
         body = {
