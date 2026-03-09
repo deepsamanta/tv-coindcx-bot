@@ -9,12 +9,8 @@ from config import COINDCX_KEY, COINDCX_SECRET, CAPITAL_USDT, LEVERAGE, TEST_MOD
 getcontext().prec = 28
 BASE_URL = "https://api.coindcx.com"
 
-# ===================== LOAD MARKET DATA =====================
 
-with open("markets.json", "r") as f:
-    MARKET_DATA = json.load(f)
-
-# ===================== PRICE TICK (TP / SL) PER SYMBOL =====================
+# ===================== PRICE TICK (TP / SL) =====================
 
 PRICE_TICKS = {
     "BTCUSDT": Decimal("0.1"),
@@ -25,6 +21,7 @@ PRICE_TICKS = {
     "DOGEUSDT": Decimal("0.0001"),
 }
 
+
 # ===================== SPECIAL RULES =====================
 
 SPECIAL_RULES = {
@@ -33,6 +30,7 @@ SPECIAL_RULES = {
         "leverage": 20
     }
 }
+
 
 # ===================== HELPERS =====================
 
@@ -44,50 +42,36 @@ def normalize_symbol(symbol: str):
 
 
 def fut_pair(symbol: str):
-    return f"B-{symbol.replace('USDT', '')}_USDT"
+    return f"B-{symbol.replace('USDT','')}_USDT"
 
 
-# ===================== GET QUANTITY STEP FROM JSON =====================
+# ===================== GET QUANTITY STEP FROM API =====================
 
 def get_quantity_step(symbol: str):
 
-    symbol = normalize_symbol(symbol)
+    pair = fut_pair(symbol)
 
-    for coin in MARKET_DATA:
+    url = f"https://api.coindcx.com/exchange/v1/derivatives/futures/data/instrument?pair={pair}&margin_currency_short_name=USDT"
 
-        coindcx_symbol = coin.get("coindcx_name", "").upper()
+    response = requests.get(url)
+    data = response.json()
 
-        if coindcx_symbol == symbol:
+    instrument = data["instrument"]
 
-            min_qty = Decimal(str(coin.get("min_quantity", 0)))
+    quantity_increment = Decimal(str(instrument["quantity_increment"]))
 
-            target_precision = int(coin.get("target_currency_precision", 0))
-            base_precision = int(coin.get("base_currency_precision", 0))
+    min_quantity = Decimal(str(instrument["min_quantity"]))
 
-            target_step = Decimal("1") / (Decimal("10") ** target_precision)
-            base_step = Decimal("1") / (Decimal("10") ** base_precision)
+    step = max(quantity_increment, min_quantity)
 
-            precision_step = max(target_step, base_step)
+    # ===== DEBUG LOG =====
+    print(f"[MARKET DEBUG] SYMBOL={symbol}", flush=True)
+    print(f"[MARKET DEBUG] PAIR={pair}", flush=True)
+    print(f"[MARKET DEBUG] QUANTITY_INCREMENT={quantity_increment}", flush=True)
+    print(f"[MARKET DEBUG] MIN_QUANTITY={min_quantity}", flush=True)
+    print(f"[MARKET DEBUG] STEP_SELECTED={step}", flush=True)
 
-            step = max(min_qty, precision_step)
-
-            # ===== DEBUG LOG =====
-            print(f"[MARKET DEBUG] SYMBOL={symbol}", flush=True)
-            print("[MARKET DEBUG] FOUND IN FILE", flush=True)
-            print(f"[MARKET DEBUG] MIN_QTY={min_qty}", flush=True)
-
-            print(f"[MARKET DEBUG] TARGET_PRECISION={target_precision}", flush=True)
-            print(f"[MARKET DEBUG] BASE_PRECISION={base_precision}", flush=True)
-
-            print(f"[MARKET DEBUG] TARGET_STEP={target_step}", flush=True)
-            print(f"[MARKET DEBUG] BASE_STEP={base_step}", flush=True)
-
-            print(f"[MARKET DEBUG] PRECISION_STEP_SELECTED={precision_step}", flush=True)
-            print(f"[MARKET DEBUG] FINAL_STEP={step}", flush=True)
-
-            return step
-
-    raise ValueError(f"No quantity step defined for {symbol}")
+    return step
 
 
 # ===================== SIGN REQUEST =====================
@@ -97,8 +81,8 @@ def sign_request(body: dict):
     payload = json.dumps(body, separators=(",", ":"))
 
     signature = hmac.new(
-        COINDCX_SECRET.encode("utf-8"),
-        payload.encode("utf-8"),
+        COINDCX_SECRET.encode(),
+        payload.encode(),
         hashlib.sha256
     ).hexdigest()
 
