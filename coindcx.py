@@ -60,9 +60,14 @@ def get_quantity_step(symbol: str):
         if coindcx_symbol == symbol:
 
             min_qty = Decimal(str(coin.get("min_quantity", 0)))
-            precision = int(coin.get("target_currency_precision", 0))
 
-            precision_step = Decimal("1") / (Decimal("10") ** precision)
+            target_precision = int(coin.get("target_currency_precision", 0))
+            base_precision = int(coin.get("base_currency_precision", 0))
+
+            target_step = Decimal("1") / (Decimal("10") ** target_precision)
+            base_step = Decimal("1") / (Decimal("10") ** base_precision)
+
+            precision_step = max(target_step, base_step)
 
             step = max(min_qty, precision_step)
 
@@ -70,9 +75,15 @@ def get_quantity_step(symbol: str):
             print(f"[MARKET DEBUG] SYMBOL={symbol}", flush=True)
             print("[MARKET DEBUG] FOUND IN FILE", flush=True)
             print(f"[MARKET DEBUG] MIN_QTY={min_qty}", flush=True)
-            print(f"[MARKET DEBUG] TARGET_PRECISION={precision}", flush=True)
-            print(f"[MARKET DEBUG] PRECISION_STEP={precision_step}", flush=True)
-            print(f"[MARKET DEBUG] SELECTED_STEP={step}", flush=True)
+
+            print(f"[MARKET DEBUG] TARGET_PRECISION={target_precision}", flush=True)
+            print(f"[MARKET DEBUG] BASE_PRECISION={base_precision}", flush=True)
+
+            print(f"[MARKET DEBUG] TARGET_STEP={target_step}", flush=True)
+            print(f"[MARKET DEBUG] BASE_STEP={base_step}", flush=True)
+
+            print(f"[MARKET DEBUG] PRECISION_STEP_SELECTED={precision_step}", flush=True)
+            print(f"[MARKET DEBUG] FINAL_STEP={step}", flush=True)
 
             return step
 
